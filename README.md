@@ -34,7 +34,7 @@ one held for a full year, and ignoring that makes short policies look
 artificially safe.
 
 **Severity — Gamma GLM with a log link.** Fitted only on policies that produced
-a claim (around 5% of the book), with average cost per claim as the target and
+a claim (around 3.68% of the book), with average cost per claim as the target and
 claim count as the weight. Claim amounts are strictly positive and right-skewed
 with variance that grows with the mean, which is what the Gamma family is for;
 ordinary least squares would assume constant variance and can predict a negative
@@ -76,12 +76,12 @@ flat (50+). This matters more than it looks — see the third finding below.
 
 ## Findings
 
-Frequency 0.0737 per year, policies claiming 3.68%
-Under-21s 0.2114, over-70s 0.0597 → 3.5× spread
-Bonus-malus 0.0513 to 0.5677 → 11× spread
-Area 0.0543 (A) to 0.0960 (E), with F at 0.0953 — plateau confirmed
-Median claim €1,172 vs mean €2,269, largest €4,075,401
-Average premium €248, range
+- Frequency 0.0737 per year, policies claiming 3.68%
+- Under-21s 0.2114, over-70s 0.0597 → 3.5× spread
+- Bonus-malus 0.0513 to 0.5677 → 11× spread
+- Area 0.0543 (A) to 0.0960 (E), with F at 0.0953 — plateau confirmed
+- Median claim €1,172 vs mean €2,269, largest €4,075,401
+- Average premium €248, range €99 to €2,196
 
 ## Claim amounts
 ![Distribution of claim costs](outputs/1_severity_distribution.png)
@@ -130,7 +130,7 @@ than fitting a straight-line relationship.
 
 ## Problems encountered
 
-Three results were initially wrong or surprising. The investigations were more
+Five results were initially wrong or surprising. The investigations were more
 informative than the fixes.
 
 ### Bonus-malus could not be split into equal-population bands
@@ -207,7 +207,30 @@ The model was ranking risk correctly; a handful of catastrophic liability claims
 landed in the cheapest decile by chance. This is the standard argument for
 capping large losses and pricing them through a separate excess layer rather
 than letting them distort the ground-up model.
+
+
+
+### Unresolved: test balance
+
+Balance on training data is 1.0002, as expected for a GLM with a log link.
+On the holdout it is 0.929, meaning the model under-predicts total claims by
+around 7%. Roughly 2% is explained by the random split (observed frequency is
+0.0734 in train against 0.0747 in test); the remainder is not diagnosed.
+Merging the sparse bonus-malus bands did not close it.
 ---
+
+### Sparse bands produced an unreliable relativity
+
+The fitted model gave bonus-malus 100–125 a relativity of 3.55 while 125–150
+came out at 1.20 and 150–350 did not appear in the top twenty at all, despite
+the raw data showing frequency climbing to 0.5677 in that top band.
+
+Counting policies per band explained it: 6,987 in 100–125 but only 598 and 209
+in the two bands above. Regularisation correctly pulled coefficients estimated
+on 209 rows toward 1.0. Merging the three into a single 100+ band gave 7,794
+policies and a relativity of 3.87, restoring a clean monotonic ladder across the
+factor. This also matches the structure in the data, where crossing the neutral
+point at 100 matters more than the gradations above it.
 
 ## Validation
 
@@ -228,7 +251,6 @@ than a failure. Predicting whether one specific driver will crash next year is
 not possible; predicting the average cost of a *group* is, and that is all
 pricing requires.
 
----
 
 ## Sensitivity analysis
 
@@ -240,27 +262,6 @@ are a judgement rather than a measurement, as are the expense, profit and
 risk-margin assumptions, which are illustrative rather than derived from the
 data.
 
-### Sparse bands produced an unreliable relativity
-
-The fitted model gave bonus-malus 100–125 a relativity of 3.55 while 125–150
-came out at 1.20 and 150–350 did not appear in the top twenty at all, despite
-the raw data showing frequency climbing to 0.5677 in that top band.
-
-Counting policies per band explained it: 6,987 in 100–125 but only 598 and 209
-in the two bands above. Regularisation correctly pulled coefficients estimated
-on 209 rows toward 1.0. Merging the three into a single 100+ band gave 7,794
-policies and a relativity of 3.87, restoring a clean monotonic ladder across the
-factor. This also matches the structure in the data, where crossing the neutral
-point at 100 matters more than the gradations above it.
-
-### Unresolved: test balance
-
-Balance on training data is 1.0002, as expected for a GLM with a log link.
-On the holdout it is 0.929, meaning the model under-predicts total claims by
-around 7%. Roughly 2% is explained by the random split (observed frequency is
-0.0734 in train against 0.0747 in test); the remainder is not diagnosed.
-Merging the sparse bonus-malus bands did not close it.
----
 
 ## CV summary
 

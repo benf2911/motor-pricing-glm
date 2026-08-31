@@ -3,3 +3,4 @@ __pycache__/
 .venv/
 data/*.csv
 outputs/*.csv
+.DS_Store
