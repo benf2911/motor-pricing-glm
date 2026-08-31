@@ -75,6 +75,8 @@ flat (50+). This matters more than it looks — see the third finding below.
 ---
 
 ## Findings
+![Frequency by driver age](outputs/2_frequency_by_age.png)
+![Frequency by bonus-malus](outputs/3_frequency_by_bonusmalus.png)
 Frequency 0.0737 per year, policies claiming 3.68%
 Under-21s 0.2114, over-70s 0.0597 → 3.5× spread
 Bonus-malus 0.0513 to 0.5677 → 11× spread
