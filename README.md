@@ -75,8 +75,7 @@ flat (50+). This matters more than it looks — see the third finding below.
 ---
 
 ## Findings
-![Frequency by driver age](outputs/2_frequency_by_age.png)
-![Frequency by bonus-malus](outputs/3_frequency_by_bonusmalus.png)
+
 Frequency 0.0737 per year, policies claiming 3.68%
 Under-21s 0.2114, over-70s 0.0597 → 3.5× spread
 Bonus-malus 0.0513 to 0.5677 → 11× spread
@@ -85,6 +84,7 @@ Median claim €1,172 vs mean €2,269, largest €4,075,401
 Average premium €248, range
 
 ## Claim amounts
+![Distribution of claim costs](outputs/1_severity_distribution.png)
 FINDING: Right-skewed as expected — most claims are around €1,000–2,000, with 
 a long tail reaching €4M. This supports using a Gamma model rather than 
 linear regression.
@@ -95,6 +95,7 @@ or placeholder value rather than a natural pattern, and could bias the severity
 model towards this amount.
 
 ## Driver age
+![Frequency by driver age](outputs/2_frequency_by_age.png)
 FINDING: Falls steeply from 0.21 for under-21s to 0.06 for over-70s, a 3.5x 
 difference. Most of the change happens in the first two age bands, with rates
 staying fairly flat after age 35.
@@ -104,6 +105,7 @@ be because MTPL only covers third-party damage, so accidents involving older
 drivers may often result in damage to their own vehicle instead.
 
 ## Bonus Malus
+![Frequency by bonus-malus](outputs/3_frequency_by_bonusmalus.png)
 FINDING: This is the strongest factor in the dataset, ranging from 0.05 to 0.57
 — an 11x difference.
 
@@ -115,6 +117,7 @@ The small dip between 70 and 85 breaks the overall upward trend and is
 likely just noise.
 
 ## Area 
+![Frequency by area](outputs/4_frequency_by_area.png)
 FINDING: Rises steadily from area A to E, going from 0.054 to 0.096 — a 1.8x 
 difference. More urban areas likely have more junctions, 
 parked cars and pedestrians.
