@@ -224,7 +224,7 @@ On the holdout it is 0.929, meaning the model under-predicts total claims by
 around 7%. Roughly 2% is explained by the random split (observed frequency is
 0.0734 in train against 0.0747 in test); the remainder is not diagnosed.
 Merging the sparse bonus-malus bands did not close it.
----
+
 
 ### Sparse bands produced an unreliable relativity
 
