@@ -76,12 +76,19 @@ flat (50+). This matters more than it looks — see the third finding below.
 
 ## Findings
 
-- Frequency 0.0737 per year, policies claiming 3.68%
-- Under-21s 0.2114, over-70s 0.0597 → 3.5× spread
-- Bonus-malus 0.0513 to 0.5677 → 11× spread
-- Area 0.0543 (A) to 0.0960 (E), with F at 0.0953 — plateau confirmed
-- Median claim €1,172 vs mean €2,269, largest €4,075,401
-- Average premium €248, range €99 to €2,196
+Overall claim frequency: 0.0737 claims per policy year
+
+Policies with at least one claim: 3.68%
+
+Driver age:
+Under 21: 0.2114
+Over 70: 0.0597
+
+Bonus malus:
+0.0513 to 0.5677
+
+Area:
+0.0543 in A to 0.0960 in E
 
 ## Claim amounts
 ![Distribution of claim costs](outputs/1_severity_distribution.png)
