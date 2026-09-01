@@ -5,7 +5,7 @@ built in Python on the French MTPL dataset (`freMTPL2`, ~678,000 real policies).
 
 The model estimates how often each policy is expected to claim and how much each
 claim is expected to cost, combines the two into an expected annual claims cost,
-loads that into a chargeable premium, and stress-tests the result against the
+loads that into a chargeable premium, and tests the result against the
 assumptions it depends on.
 
 ---
