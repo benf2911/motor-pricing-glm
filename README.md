@@ -1,281 +1,106 @@
-# Motor Insurance Pricing Model
+Motor TPL pricing model
 
-A frequency–severity pricing model for motor third-party liability insurance,
-built in Python on the French MTPL dataset (`freMTPL2`, ~678,000 real policies).
+A frequency-severity pricing model for motor third-party liability insurance, written in Python on the French MTPL dataset (freMTPL2, about 678,000 real policies).
 
-The model estimates how often each policy is expected to claim and how much each
-claim is expected to cost, combines the two into an expected annual claims cost,
-loads that into a chargeable premium, and tests the result against the
-assumptions it depends on.
+It predicts how often each policy will claim and how much each claim will cost, multiplies the two to get an expected annual claims cost, turns that into a premium, and then stress tests the assumptions.
 
----
-
-## Running it
-
-```bash
+Running it
 pip install pandas numpy scikit-learn matplotlib
 python3 pricing_model.py
-```
 
-The dataset is `freMTPL2freq` joined to `freMTPL2sev`, available from OpenML
-([41214](https://www.openml.org/d/41214) and
-[41215](https://www.openml.org/d/41215)). Place the joined file at
-`data/fremtpl2.csv`.
+The dataset is freMTPL2freq joined to freMTPL2sev, both on OpenML (41214 and 41215). Put the joined file at data/fremtpl2.csv.
 
----
+Method
 
-## Method
+Frequency. Poisson GLM, log link. The target is claims per year of exposure, and each policy is weighted by its exposure. That's the same as using log(Exposure) as an offset. A policy held for three months only had a quarter of a year to claim, so if you ignore exposure, short policies look safer than they are.
 
-**Frequency — Poisson GLM with a log link.** The target is claims per year of
-exposure, with each policy weighted by its exposure. This is equivalent to
-including `log(Exposure)` as an offset, which is the standard treatment: a
-policy held for three months has had a quarter of the opportunity to claim as
-one held for a full year, and ignoring that makes short policies look
-artificially safe.
+Severity. Gamma GLM, log link. Fitted only on policies with a claim (3.68% of the book). The target is average cost per claim, weighted by claim count. Claim amounts are always positive, right-skewed, and the variance grows with the mean. Gamma handles all of that. OLS assumes constant variance and can predict a negative claim cost.
 
-**Severity — Gamma GLM with a log link.** Fitted only on policies that produced
-a claim (around 3.68% of the book), with average cost per claim as the target and
-claim count as the weight. Claim amounts are strictly positive and right-skewed
-with variance that grows with the mean, which is what the Gamma family is for;
-ordinary least squares would assume constant variance and can predict a negative
-claim cost.
+Pure premium is frequency times severity:
 
-**Pure premium** is the product of the two:
-
-```
 pure premium = expected frequency × expected severity
-```
 
-**Office premium** loads that for expenses, capital and profit:
+The office premium adds expenses, capital and profit:
 
-```
 premium = (pure premium × (1 + risk margin) + fixed expense)
           ÷ (1 − variable expense rate − profit rate)
-```
 
-The division matters. Commission, premium tax and profit are percentages of the
-premium itself, so they cannot simply be added to the claims cost — the formula
-has to resolve that circularity.
+You divide instead of adding because commission, premium tax and profit are percentages of the final premium. Adding them to the claims cost would undercount them.
 
----
+Banding
 
-## Banding
+I banded the continuous factors before modelling because their effect on claim frequency isn't a straight line. I set the boundaries by hand from the exploratory charts:
 
-Continuous rating factors are banded before modelling, because their
-relationships with claim frequency are not straight lines. The boundaries were
-chosen from the exploratory analysis rather than by an automatic rule:
-
-```python
 AGE_BANDS = [17, 21, 25, 30, 40, 50, 60, 70, 100]
-```
 
-Narrow where the signal is concentrated (18–25), wide where the relationship is
-flat (50+). This matters more than it looks — see the third finding below.
+Narrow bands where the signal is (18–25), wide ones where it's flat (50+). The automatic options wiped out the young-driver effect. See Problems below.
 
----
+What the data shows
 
-## Findings
+Overall frequency is 0.0737 claims per policy year. 3.68% of policies have at least one claim.
 
-Overall claim frequency: 0.0737 claims per policy year
+Claim amounts. Right-skewed, as expected. Most claims are €1,000–2,000, with a tail out to €4M. So Gamma, not OLS. There's also a big spike at €1,200 (see Problems).
 
-Policies with at least one claim: 3.68%
+Driver age. Frequency drops from 0.21 for under-21s to 0.06 for over-70s, a 3.5× difference. Most of the drop happens in the first two bands, and it's fairly flat after 35. Unlike UK motor data, there's no rise at older ages. MTPL only covers third-party damage, so older drivers' accidents may end up as damage to their own car instead.
 
-Driver age:
-Under 21: 0.2114
-Over 70: 0.0597
+Bonus-malus. The strongest factor: 0.05 to 0.57, an 11× difference. There's a sharp jump at 100 (0.15 to 0.34), which is where drivers go from earning a discount to being penalised for past claims. That's partly circular, since the score is built from claim history. The small dip between 70 and 85 is noise.
 
-Bonus malus:
-0.0513 to 0.5677
+Area. Rises from 0.054 in A to 0.096 in E, a 1.8× difference. Urban areas have more junctions, parked cars and pedestrians. E and F are almost the same (0.0958 vs 0.0952), so I kept area as categories instead of fitting a straight line.
 
-Area:
-0.0543 in A to 0.0960 in E
+Problems
 
-## Claim amounts
-![Distribution of claim costs](outputs/1_severity_distribution.png)
-FINDING: Right-skewed as expected — most claims are around €1,000–2,000, with 
-a long tail reaching €4M. This supports using a Gamma model rather than 
-linear regression.
+Five results came out wrong or odd on the first run. Here's what caused each one.
 
-CAVEAT: There is a large spike at around €1,200, with roughly 11,000 claims 
-compared with around 1,200 in nearby bins. This could be a standard settlement 
-or placeholder value rather than a natural pattern, and could bias the severity
-model towards this amount.
+qcut couldn't band bonus-malus
 
-## Driver age
-![Frequency by driver age](outputs/2_frequency_by_age.png)
-FINDING: Falls steeply from 0.21 for under-21s to 0.06 for over-70s, a 3.5x 
-difference. Most of the change happens in the first two age bands, with rates
-staying fairly flat after age 35.
+pd.qcut failed with ValueError: Bin edges must be unique and returned six boundaries, all at 50.0. Over half the portfolio sits at exactly 50, the maximum no-claims discount, so qcut couldn't split it. I set the boundaries by hand: 50 on its own, then splits where the rest of the drivers are spread out.
 
-There is no increase at older ages, unlike typical UK motor data. This could 
-be because MTPL only covers third-party damage, so accidents involving older 
-drivers may often result in damage to their own vehicle instead.
+A spike at €1,200 in the claims data
 
-## Bonus Malus
-![Frequency by bonus-malus](outputs/3_frequency_by_bonusmalus.png)
-FINDING: This is the strongest factor in the dataset, ranging from 0.05 to 0.57
-— an 11x difference.
+The first severity histogram was a single bar. bins=60 makes sixty equal-width bins, and with a max claim near €4M each one was about €67,000 wide, so nearly every claim landed in the first. A log x-axis didn't fix it because the bins were still equal-width. Log-spaced bin edges from np.logspace did.
 
-There is a sharp jump at 100 (0.15 to 0.34). This seems to separate drivers 
-earning a discount from those who have actually made a claim. However, this 
-is partly circular because the score itself is based on claim history.
+The fixed chart showed one bin near €1,200 with about 11,000 claims, against about 1,200 in each neighbour. That's an eightfold spike. It's probably a fixed settlement amount or a placeholder for open claims. Either way it'll pull the severity model toward €1,200, and I can't fix that with this dataset.
 
-The small dip between 70 and 85 breaks the overall upward trend and is 
-likely just noise.
+Automatic banding hid the young-driver effect
 
-## Area 
-![Frequency by area](outputs/4_frequency_by_area.png)
-FINDING: Rises steadily from area A to E, going from 0.054 to 0.096 — a 1.8x 
-difference. More urban areas likely have more junctions, 
-parked cars and pedestrians.
+The chart showed under-21s claiming 3.5× as often as the oldest drivers. The GLM gave the youngest band a relativity of 0.88, so 12% fewer claims. Those can't both be right.
 
-The rate levels off at E/F (0.0958 vs 0.0952), so the relationship is not 
-completely linear. This supports treating area as categories rather 
-than fitting a straight-line relationship.
+I checked the discretiser's bin_edges_. Band 0 ran from 18 to 28, more than twice as wide as any other band. strategy="quantile" makes each band hold the same number of drivers, and young drivers are a small part of the book, so the first band had to stretch to 28 to fill up. That averaged the 0.21 frequency of 18–21s in with the much lower rates of 22–28s.
 
----
+strategy="uniform" didn't help either. It made bands about 8 years wide, several of them almost empty at the top end, and band 0 still went from 18 to 26.
 
-## Problems encountered
+Neither strategy puts a cut at 21, because neither one knows it matters. So I set the bands by hand.
 
-Five results were initially wrong or surprising. The investigations were more
-informative than the fixes.
+There's a second thing going on too. The charts are univariate. The GLM isn't. Young drivers cluster at high bonus-malus, so once the model controls for bonus-malus, some of the age effect moves over to it.
 
-### Bonus-malus could not be split into equal-population bands
+The lift table was out of order
 
-`pd.qcut` failed with `ValueError: Bin edges must be unique`, returning six
-identical boundaries at 50.0.
+Band 1, the decile the model priced cheapest, had an actual cost of €148 per policy year against €65 predicted. That made it the second most expensive band in reality.
 
-The error was the finding: over half the portfolio sits at exactly bonus-malus
-50, the maximum no-claims discount, and a single repeated value cannot be
-divided across bands. Resolved by using explicit boundaries, isolating the 50
-group and splitting the remainder where drivers are genuinely spread out.
+I checked mean exposure first, in case short policies were inflating per-year costs. They weren't. Band 1 averaged 0.533 years, in line with bands 2 to 6.
 
-### A likely standardised settlement amount in the claims data
+A few huge claims caused it. Band 1 had 365 claims totalling €1.39M, and five of them made up 54.8% of that, the biggest at €382,955. Without those five, the band's actual cost drops to about €67 against €65 predicted. The model was ranking risk fine. Five big liability claims just happened to land in the cheapest decile. Insurers usually cap losses like these and price them in a separate excess layer, so they don't throw off the main model.
 
-The first severity histogram rendered as a single bar. `bins=60` produced sixty
-equal-width bins in euros; with a maximum claim near €4m each bin spanned
-roughly €67,000, so almost every claim fell into the first. A logarithmic x-axis
-did not help because the bins themselves were still equal-width. Resolved by
-generating logarithmically spaced bin edges with `np.logspace`.
+Sparse bonus-malus bands
 
-The corrected chart revealed a data-quality issue: a single bin near €1,200
-holds roughly 11,000 claims against ~1,200 in each neighbour. No natural
-distribution produces an eightfold spike in one bin, so this is most likely a
-standardised settlement figure or a placeholder for unfinalised claims. It would
-bias a severity model toward that value, and is a genuine limitation of fitting
-on this dataset.
+The model gave bonus-malus 100–125 a relativity of 3.55, 125–150 got 1.20, and 150–350 didn't make the top twenty at all, even though raw frequency climbs to 0.5677 in that top band.
 
-### Automatic banding destroyed the young-driver signal
+The three bands had 6,987, 598 and 209 policies. Regularisation pulled the coefficients for the small bands toward 1.0. I merged all three into one 100+ band (7,794 policies). It got a relativity of 3.87, and the factor goes up steadily again. That fits the data anyway: crossing 100 matters more than anything above it.
 
-The univariate chart showed under-21s claiming 3.5× as often as the oldest
-group, but the fitted GLM gave the youngest age band a relativity of 0.88 —
-implying 12% *fewer* claims. Both could not describe the same population.
+Open issue: holdout balance
 
-Inspecting the fitted discretiser's `bin_edges_` showed band 0 spanning ages
-18 to 28, more than twice the width of any other band. The cause was
-`strategy="quantile"`, which sizes bands to hold equal *numbers* of drivers;
-young drivers are a small share of the portfolio, so the lowest band had to
-reach to 28 to gather a tenth of the book, averaging the 0.21 frequency of
-18–21s together with the much lower rates of 22–28s.
+Balance on the training data is 1.0002, which you'd expect from a log-link GLM. On the holdout it's 0.929, so the model under-predicts total claims by about 7%. About 2% comes from the random split (observed frequency is 0.0734 in train and 0.0747 in test). I haven't found the cause of the rest yet. Merging the sparse bonus-malus bands didn't close it.
 
-Switching to `strategy="uniform"` did not help — it produced bands of ~8 years
-each, several of them nearly empty at the top of the age range, with band 0
-still spanning 18–26.
+Validation
 
-Neither automatic strategy places a boundary at 21, because neither knows what
-the exploratory analysis found. Resolved by banding on explicit boundaries
-derived from the data. This is a concrete argument for why pricing actuaries
-band by judgement rather than algorithm.
+I held out 25% of the data before fitting anything.
 
-A secondary effect is also present and worth separating from the banding issue:
-the exploratory charts are univariate while the GLM is multivariate, estimating
-each factor holding the others constant. Young drivers cluster at high
-bonus-malus scores, so once the model accounts for bonus-malus, some of the risk
-that age was standing proxy for is correctly reattributed.
+Balance. Predicted vs actual total claims cost. On training data a log-link GLM should match the total almost exactly.
+Actual vs expected by factor. Observed and predicted frequency across each level of each rating factor, to see where the model is off.
+Lift table. The holdout is sorted by predicted pure premium and cut into ten bands. If the model separates risk, actual cost goes up across the bands. That's what an underwriter wants to see, and one goodness-of-fit number won't show it.
 
+R² is close to zero for this kind of model, and that's normal. You can't predict whether one driver crashes next year. You can predict the average cost of a group, and that's all pricing needs.
 
-### A non-monotonic lift table caused by five large claims
+Sensitivity analysis
 
-The lift table showed band 1 — the decile the model priced cheapest — with an
-actual cost of EUR 148 per policy-year against a predicted EUR 65, making it the
-second most expensive band in reality. That would suggest the model was failing
-to rank risk at the cheap end.
-
-Mean exposure was checked first, on the theory that very short policies produce
-inflated per-year costs when they do claim. That was ruled out: band 1 averaged
-0.533 years of exposure, in line with bands 2 to 6.
-
-The actual cause was the severity tail. Band 1 contained 365 claims totalling
-EUR 1.39m, of which five claims accounted for 54.8% — the largest being
-EUR 382,955. Excluding those five brings the band's actual cost to roughly
-EUR 67 against a predicted EUR 65.
-
-The model was ranking risk correctly; a handful of catastrophic liability claims
-landed in the cheapest decile by chance. This is the standard argument for
-capping large losses and pricing them through a separate excess layer rather
-than letting them distort the ground-up model.
-
-
-
-### Unresolved: test balance
-
-Balance on training data is 1.0002, as expected for a GLM with a log link.
-On the holdout it is 0.929, meaning the model under-predicts total claims by
-around 7%. Roughly 2% is explained by the random split (observed frequency is
-0.0734 in train against 0.0747 in test); the remainder is not diagnosed.
-Merging the sparse bonus-malus bands did not close it.
-
-
-### Sparse bands produced an unreliable relativity
-
-The fitted model gave bonus-malus 100–125 a relativity of 3.55 while 125–150
-came out at 1.20 and 150–350 did not appear in the top twenty at all, despite
-the raw data showing frequency climbing to 0.5677 in that top band.
-
-Counting policies per band explained it: 6,987 in 100–125 but only 598 and 209
-in the two bands above. Regularisation correctly pulled coefficients estimated
-on 209 rows toward 1.0. Merging the three into a single 100+ band gave 7,794
-policies and a relativity of 3.87, restoring a clean monotonic ladder across the
-factor. This also matches the structure in the data, where crossing the neutral
-point at 100 matters more than the gradations above it.
-
-## Validation
-
-Validated on a 25% holdout split off before any fitting.
-
-- **Balance** — predicted against actual total claims cost. A GLM with a log
-  link should reproduce the observed total almost exactly on training data.
-- **Actual vs expected by factor** — observed and predicted frequency compared
-  across each rating factor's levels. This shows *where* a model is wrong, not
-  just that it is.
-- **Lift table** — the holdout is ranked by predicted pure premium and split
-  into ten bands. If the model separates risk, actual claims cost rises across
-  the bands. This answers the underwriter's real question in a way a single
-  goodness-of-fit statistic does not.
-
-Note that R² is near zero for this kind of model, and that is expected rather
-than a failure. Predicting whether one specific driver will crash next year is
-not possible; predicting the average cost of a *group* is, and that is all
-pricing requires.
-
-
-## Sensitivity analysis
-
-Premiums are only as good as their assumptions, so the book is re-priced under
-stressed scenarios. Severity is stressed harder than frequency because it is the
-more volatile of the two — it absorbs claims inflation as repair costs and
-injury settlements climb, while accident rates move slowly. The relative sizes
-are a judgement rather than a measurement, as are the expense, profit and
-risk-margin assumptions, which are illustrative rather than derived from the
-data.
-
-
-## CV summary
-
-> Built a motor insurance pricing model in Python using ~678,000 real policy
-> records. Modelled claim frequency and severity separately using Poisson and
-> Gamma GLMs, handling policy exposure via an offset, and combined them into
-> expected claims costs before loading for expenses, capital and profit to
-> produce indicative premiums. Validated on a holdout sample using
-> actual-versus-expected analysis and lift tables, and stress-tested the pricing
-> against claims inflation and frequency assumptions.
+I re-priced the book under stressed scenarios. Severity gets a bigger stress than frequency because it moves more: claims inflation pushes up repair and injury costs, while accident rates change slowly. The stress sizes are my own judgement. The expense, profit and risk margin figures are placeholders, not taken from the data.
