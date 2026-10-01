@@ -1,10 +1,11 @@
-Motor TPL pricing model
+Motor Insurance Pricing Model
 
 A frequency-severity pricing model for motor third-party liability insurance, written in Python on the French MTPL dataset (freMTPL2, about 678,000 real policies).
 
 It predicts how often each policy will claim and how much each claim will cost, multiplies the two to get an expected annual claims cost, turns that into a premium, and then stress tests the assumptions.
 
 Running it
+bash
 pip install pandas numpy scikit-learn matplotlib
 python3 pricing_model.py
 
@@ -31,6 +32,7 @@ Banding
 
 I banded the continuous factors before modelling because their effect on claim frequency isn't a straight line. I set the boundaries by hand from the exploratory charts:
 
+python
 AGE_BANDS = [17, 21, 25, 30, 40, 50, 60, 70, 100]
 
 Narrow bands where the signal is (18–25), wide ones where it's flat (50+). The automatic options wiped out the young-driver effect. See Problems below.
@@ -39,11 +41,19 @@ What the data shows
 
 Overall frequency is 0.0737 claims per policy year. 3.68% of policies have at least one claim.
 
+Show Image
+
 Claim amounts. Right-skewed, as expected. Most claims are €1,000–2,000, with a tail out to €4M. So Gamma, not OLS. There's also a big spike at €1,200 (see Problems).
+
+Show Image
 
 Driver age. Frequency drops from 0.21 for under-21s to 0.06 for over-70s, a 3.5× difference. Most of the drop happens in the first two bands, and it's fairly flat after 35. Unlike UK motor data, there's no rise at older ages. MTPL only covers third-party damage, so older drivers' accidents may end up as damage to their own car instead.
 
+Show Image
+
 Bonus-malus. The strongest factor: 0.05 to 0.57, an 11× difference. There's a sharp jump at 100 (0.15 to 0.34), which is where drivers go from earning a discount to being penalised for past claims. That's partly circular, since the score is built from claim history. The small dip between 70 and 85 is noise.
+
+Show Image
 
 Area. Rises from 0.054 in A to 0.096 in E, a 1.8× difference. Urban areas have more junctions, parked cars and pedestrians. E and F are almost the same (0.0958 vs 0.0952), so I kept area as categories instead of fitting a straight line.
 
@@ -104,3 +114,7 @@ R² is close to zero for this kind of model, and that's normal. You can't predic
 Sensitivity analysis
 
 I re-priced the book under stressed scenarios. Severity gets a bigger stress than frequency because it moves more: claims inflation pushes up repair and injury costs, while accident rates change slowly. The stress sizes are my own judgement. The expense, profit and risk margin figures are placeholders, not taken from the data.
+
+CV summary
+
+Built a motor insurance pricing model in Python using ~678,000 real policy records. Modelled claim frequency and severity separately using Poisson and Gamma GLMs, handling policy exposure via an offset, and combined them into expected claims costs before loading for expenses, capital and profit to produce indicative premiums. Validated on a holdout sample using actual-versus-expected analysis and lift tables, and stress-tested the pricing against claims inflation and frequency assumption
