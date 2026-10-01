@@ -121,13 +121,3 @@ R² is close to zero for this kind of model, and that's normal. You can't predic
 ## Sensitivity analysis
 
 I re-priced the book under stressed scenarios. Severity gets a bigger stress than frequency because it moves more: claims inflation pushes up repair and injury costs, while accident rates change slowly. The stress sizes are my own judgement. The expense, profit and risk margin figures are placeholders, not taken from the data.
-
-## CV summary
-
-> Built a motor insurance pricing model in Python using ~678,000 real policy
-> records. Modelled claim frequency and severity separately using Poisson and
-> Gamma GLMs, handling policy exposure via an offset, and combined them into
-> expected claims costs before loading for expenses, capital and profit to
-> produce indicative premiums. Validated on a holdout sample using
-> actual-versus-expected analysis and lift tables, and stress-tested the pricing
-> against claims inflation and frequency assumptions.
