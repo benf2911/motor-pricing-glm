@@ -1,12 +1,10 @@
 """
-Motor insurance pricing model - French MTPL (freMTPL2).
+Motor insurance pricing model using the French MTPL data (freMTPL2).
 
-Predicts how often each policy claims and how much each claim costs, combines
-them into an expected annual claims cost, then loads that into a premium.
+Works out how often each policy claims and how much a claim costs, multiplies
+the two together, then adds expenses and profit on top to get a premium.
 
-Run:  python3 pricing_model.py
-
-Everything is in this one file, top to bottom, in the order it happens.
+Run with: python3 pricing_model.py
 """
 
 import numpy as np
@@ -21,47 +19,47 @@ pd.set_option("display.width", 150)
 pd.set_option("display.max_columns", 50)
 
 
-# =====================================================================
-# 1. LOAD AND CLEAN
-# =====================================================================
+# band edges, picked by looking at the charts rather than using an automatic
+# rule. most of the young driver effect sits between 18 and 25 so those bands
+# are narrow, and it goes flat after 50 so those ones are wide. quantile or
+# equal width banding never puts an edge at 21 and loses the signal.
+AGE_BANDS = [17, 21, 25, 30, 40, 50, 60, 70, 100]
+BM_BANDS = [49, 50, 60, 70, 85, 100, 350]
+VEHAGE_BANDS = [-1, 1, 3, 5, 8, 12, 20, 100]
+POWER_BANDS = [0, 5, 6, 7, 8, 10, 20]
+
+# assumptions, not from the data
+FIXED_EXPENSE = 45.0        # per policy, admin etc
+VARIABLE_EXPENSE = 0.15     # commission and tax, share of premium
+PROFIT = 0.05
+RISK_MARGIN = 0.08
+
 
 def load_data(path="data/fremtpl2.csv"):
-    """Read the cached dataset and apply the standard cleaning steps."""
     df = pd.read_csv(path)
 
-    # Exposure is the fraction of a year the policy was on risk. A few rows
-    # exceed 1.0, which is impossible for an annual policy.
+    # exposure is the fraction of a year on risk, so it can't be over 1
     df["Exposure"] = df["Exposure"].clip(upper=1.0)
 
-    # A thin tail of policies show 10+ claims. Capping stops a handful of rows
-    # dominating the fit.
+    # a few policies show 10+ claims, cap so they don't dominate
     df["ClaimNb"] = df["ClaimNb"].clip(upper=4)
 
-    # Contradictory rows: a claim with no cost, or a cost with no claim.
-    # Neither can contribute to a severity estimate, so zero both consistently.
+    # rows that contradict themselves (claim with no cost, or cost with no
+    # claim). can't use either for severity so zero both
     bad = (((df["ClaimNb"] > 0) & (df["ClaimAmount"] <= 0)) |
            ((df["ClaimNb"] == 0) & (df["ClaimAmount"] > 0)))
     df.loc[bad, ["ClaimNb", "ClaimAmount"]] = 0
 
     df = df[df["Exposure"] > 0].copy()
 
-    # Derived columns used throughout.
     df["Frequency"] = df["ClaimNb"] / df["Exposure"]
     df["AvgClaimAmount"] = np.where(df["ClaimNb"] > 0,
                                     df["ClaimAmount"] / df["ClaimNb"], 0.0)
     return df
 
 
-# =====================================================================
-# 2. EXPLORE
-# =====================================================================
-
 def frequency_by(df, column):
-    """Observed claim frequency for each level of `column`.
-
-    Total claims divided by total exposure, within each group. Same
-    calculation as the portfolio-wide frequency, just done per group.
-    """
+    # claims divided by exposure, done within each group
     g = df.groupby(column, observed=True)
     return g["ClaimNb"].sum() / g["Exposure"].sum()
 
@@ -81,7 +79,7 @@ def explore(df):
     print(f"Median claim      : EUR {claims['ClaimAmount'].median():,.0f}")
     print(f"Largest claim     : EUR {claims['ClaimAmount'].max():,.0f}")
 
-    # Mean far above median is the skew that forces a separate severity model.
+    # mean sits way above median, that skew is why severity gets its own model
 
     d = df.copy()
     d["age_band"] = pd.cut(d["DrivAge"], AGE_BANDS)
@@ -96,13 +94,12 @@ def explore(df):
     print("\nFrequency by area (A rural -> F urban):")
     print(frequency_by(df, "Area").round(4).to_string())
 
-    _plot_exploration(df, d, claims)
+    make_charts(df, d, claims)
 
 
-def _plot_exploration(df, d, claims):
-    """Four charts, saved to outputs/."""
-    # Claim cost distribution. Bins must be log-spaced too, not just the axis:
-    # equal-width bins in euros put almost every claim in the first bin.
+def make_charts(df, d, claims):
+    # the bins have to be log spaced as well as the axis. with equal width
+    # bins in euros nearly every claim lands in the first bin
     bins = np.logspace(np.log10(claims["ClaimAmount"].min()),
                        np.log10(claims["ClaimAmount"].max()), 60)
     fig, ax = plt.subplots(figsize=(8, 5))
@@ -133,34 +130,13 @@ def _plot_exploration(df, d, claims):
     print("\n[charts written to outputs/]")
 
 
-# =====================================================================
-# 3. BUILD FEATURES
-# =====================================================================
-
-# Band boundaries. Chosen from the exploration above, not by an automatic
-# rule: the young-driver effect is concentrated in 18-25, so those bands are
-# narrow, while the relationship is flat after 50 so those bands are wide.
-# An equal-population or equal-width rule puts no boundary at 21 and averages
-# the strongest signal in the data away.
-AGE_BANDS = [17, 21, 25, 30, 40, 50, 60, 70, 100]
-BM_BANDS = [49, 50, 60, 70, 85, 100, 350]
-VEHAGE_BANDS = [-1, 1, 3, 5, 8, 12, 20, 100]
-POWER_BANDS = [0, 5, 6, 7, 8, 10, 20]
-
-
 def build_features(df):
-    """Turn the raw columns into a numeric matrix the GLM can use.
+    """Turn the raw columns into numbers the model can use.
 
-    A GLM multiplies each column by a coefficient and adds the results, so
-    every column has to be a number. Two conversions are needed:
-
-      - Categories ("Area F") become one 0/1 column per level.
-      - Continuous columns are banded first, then one-hot encoded, because
-        their relationship with claims is not a straight line.
-
-    pd.get_dummies does the one-hot encoding. drop_first=True drops one level
-    of each factor to act as the baseline that every relativity is measured
-    against.
+    A GLM multiplies each column by a coefficient and adds them up, so every
+    column has to be numeric. Categories become one 0/1 column each, and the
+    continuous columns get banded first because none of them are straight
+    lines. drop_first drops one level per factor to act as the baseline.
     """
     X = pd.DataFrame(index=df.index)
 
@@ -169,7 +145,7 @@ def build_features(df):
     X["veh_age"] = pd.cut(df["VehAge"], VEHAGE_BANDS)
     X["veh_power"] = pd.cut(df["VehPower"], POWER_BANDS)
 
-    # Density spans 1 to 30,000, so log it before banding.
+    # density runs from 1 to 30,000 so take logs before banding
     X["density"] = pd.qcut(np.log1p(df["Density"]), 6, duplicates="drop")
 
     X["area"] = df["Area"]
@@ -181,30 +157,20 @@ def build_features(df):
 
 
 def align(X_train, X_other):
-    """Make sure both matrices have the same columns in the same order.
-
-    A rare region present in training but absent from test would otherwise
-    produce a different number of columns and the model would refuse to
-    predict.
-    """
+    # a rare region in train but not test would give different column counts
     return X_other.reindex(columns=X_train.columns, fill_value=0.0)
 
-
-# =====================================================================
-# 4. FIT THE MODELS
-# =====================================================================
 
 def fit_frequency(X, df, alpha=1e-3):
     """Poisson GLM for claims per year.
 
-    THE KEY IDEA IN THIS PROJECT. Exposure is how long a policy was on risk.
-    A policy held three months has had a quarter of the chance to produce a
-    claim as one held all year. Ignore that and short policies look safe when
-    they are simply young.
+    Exposure matters a lot here. A policy held for three months has had a
+    quarter of the chance to claim as one held all year, so if you model raw
+    counts the short policies look safe when really they are just young.
 
-    The standard treatment is an offset of log(Exposure). scikit-learn has no
-    offset argument, so the equivalent form is used: model the RATE
-    (ClaimNb / Exposure) and weight each row by its Exposure.
+    Normally you would use log(Exposure) as an offset but sklearn has no
+    offset argument, so instead model the rate (ClaimNb / Exposure) and
+    weight every row by its Exposure, which comes to the same thing.
     """
     model = PoissonRegressor(alpha=alpha, max_iter=1000)
     model.fit(X, df["Frequency"], sample_weight=df["Exposure"])
@@ -214,17 +180,13 @@ def fit_frequency(X, df, alpha=1e-3):
 def fit_severity(X, df, alpha=1e-2):
     """Gamma GLM for cost per claim.
 
-    Two things worth defending:
+    Only fitted on policies that actually claimed, since "how much does a
+    claim cost" means nothing for a policy with no claim. Weighted by claim
+    count as a policy with three claims tells you three times as much.
 
-      - Fitted only on policies that actually claimed (~5% of the book).
-        "How much does a claim cost" is undefined for a policy with no claim,
-        and including 95% zeros answers a different question.
-      - Weighted by claim count. A policy with three claims is three times as
-        much evidence about severity as one with a single claim.
-
-    Gamma rather than ordinary least squares because claim amounts are strictly
-    positive, right-skewed, and their variance grows with their mean. OLS
-    assumes constant variance and can predict a negative claim cost.
+    Gamma rather than ordinary least squares because claim amounts are always
+    positive, skewed to the right, and get more variable as they get bigger.
+    OLS assumes constant variance and can predict a negative cost.
     """
     mask = (df["ClaimNb"] > 0) & (df["AvgClaimAmount"] > 0)
     model = GammaRegressor(alpha=alpha, max_iter=1000)
@@ -236,16 +198,12 @@ def fit_severity(X, df, alpha=1e-2):
 
 
 def relativities(model, columns):
-    """Convert coefficients into rating multipliers.
+    """Turn coefficients into rating multipliers.
 
-    Both models use a log link, which makes their effects multiply rather than
-    add. That is why exp(coefficient) is the multiplier:
-
-        coefficient  0.30  ->  exp(0.30) = 1.35  ->  35% more claims
-        coefficient  0.00  ->  exp(0.00) = 1.00  ->  no effect
-        coefficient -0.16  ->  exp(-0.16) = 0.85 ->  15% fewer claims
-
-    Each is measured against the dropped baseline level of its own factor.
+    Both models use a log link so the effects multiply instead of adding,
+    which is why exp(coefficient) gives the multiplier. 0.30 becomes 1.35
+    (35% more claims), 0 becomes 1.00, and -0.16 becomes 0.85. Each one is
+    measured against the dropped baseline level of its own factor.
     """
     return (pd.DataFrame({"feature": columns,
                           "coefficient": model.coef_,
@@ -254,17 +212,10 @@ def relativities(model, columns):
               .reset_index(drop=True))
 
 
-# =====================================================================
-# 5. VALIDATE
-# =====================================================================
-
 def check_balance(model, X, df, label):
-    """Predicted total against actual total.
-
-    A GLM with a log link should reproduce the observed total almost exactly on
-    its own training data. A ratio away from 1.00 on train means something is
-    wrong, usually that sample weights were not passed.
-    """
+    # predicted total against actual total. on training data a log link GLM
+    # should land almost exactly on 1.00, so if it doesn't something is wrong
+    # (usually the sample weights never got passed)
     pred = model.predict(X)
     actual = df["ClaimNb"].sum() / df["Exposure"].sum()
     expected = np.average(pred, weights=df["Exposure"])
@@ -275,12 +226,8 @@ def check_balance(model, X, df, label):
 
 
 def actual_vs_expected(freq_model, X, df, column):
-    """Observed and predicted frequency side by side across one factor.
-
-    The most useful diagnostic in pricing. If the two track each other the
-    model is fit for purpose; where they diverge tells you exactly where it is
-    weak.
-    """
+    # observed next to predicted across one factor. if they track each other
+    # the model is fine, and where they split tells you where it's weak
     d = df.copy()
     d["pred"] = freq_model.predict(X)
     d["_lvl"] = (pd.cut(d[column], AGE_BANDS) if column == "DrivAge"
@@ -298,12 +245,12 @@ def actual_vs_expected(freq_model, X, df, column):
 
 
 def lift_table(df, n=10):
-    """Rank the book by predicted cost, then check actual cost follows.
+    """Sort the book by predicted cost and check the actual cost follows.
 
-    Split into ten equal groups by predicted pure premium. If the model
-    genuinely separates risk, actual cost rises across the bands. This answers
-    the underwriter's real question - can it tell a cheap risk from an
-    expensive one - in a way no single accuracy score does.
+    Ten equal groups by predicted pure premium. If the model really separates
+    risk then actual cost climbs down the table. This answers the question an
+    underwriter actually cares about, which is whether it can tell a cheap
+    risk from an expensive one.
     """
     d = df.copy()
     d["band"] = pd.qcut(d["pure_premium"], n, labels=False,
@@ -321,25 +268,13 @@ def lift_table(df, n=10):
     return out
 
 
-# =====================================================================
-# 6. PRICING
-# =====================================================================
-
-# Illustrative assumptions, not derived from the data. Stating which of your
-# inputs are estimated and which are judgemental is the point of the exercise.
-FIXED_EXPENSE = 45.0        # EUR per policy: admin, issuance
-VARIABLE_EXPENSE = 0.15     # commission and tax, as a share of premium
-PROFIT = 0.05               # target underwriting margin
-RISK_MARGIN = 0.08          # loading for uncertainty in the estimate
-
-
 def office_premium(pure_premium, fixed=FIXED_EXPENSE, var=VARIABLE_EXPENSE,
                    profit=PROFIT, risk=RISK_MARGIN):
-    """Load the expected claims cost into a chargeable premium.
+    """Load the expected claims cost up into a chargeable premium.
 
-    Note the DIVISION. Commission, tax and profit are percentages of the
-    premium itself - the very thing being solved for - so they cannot simply
-    be added to the claims cost. The formula resolves that circularity:
+    Note this divides rather than adds. Commission, tax and profit are all
+    percentages of the premium itself, which is the thing being solved for,
+    so you can't just add them onto the claims cost:
 
         premium = (pure premium x (1 + risk) + fixed) / (1 - var - profit)
     """
@@ -347,7 +282,7 @@ def office_premium(pure_premium, fixed=FIXED_EXPENSE, var=VARIABLE_EXPENSE,
 
 
 def premium_breakdown(pp):
-    """Itemised build-up for a single risk."""
+    # itemised build up for one risk
     prem = float(office_premium(pp))
     rows = [
         ("Expected claims cost (pure premium)", pp),
@@ -360,17 +295,12 @@ def premium_breakdown(pp):
     return pd.DataFrame(rows, columns=["Component", "EUR"])
 
 
-# =====================================================================
-# 7. SENSITIVITY
-# =====================================================================
-
 def sensitivity(pure_premiums, exposure):
-    """Re-price the book under stressed assumptions.
+    """Re-price the book with the assumptions stressed.
 
-    Severity is stressed harder than frequency because it is the more volatile
-    of the two: it absorbs claims inflation, as repair costs and injury
-    settlements climb year on year, while accident rates move slowly. The
-    relative sizes are a judgement, not a measurement.
+    Severity gets stressed harder than frequency as it is the more volatile
+    of the two, picking up claims inflation whilst accident rates move slowly.
+    How much harder is a judgement, not something measured.
     """
     base = np.average(office_premium(pure_premiums), weights=exposure)
     rows = []
@@ -391,10 +321,6 @@ def sensitivity(pure_premiums, exposure):
                      "Change %": (prem / base - 1) * 100})
     return pd.DataFrame(rows).set_index("Scenario")
 
-
-# =====================================================================
-# MAIN
-# =====================================================================
 
 def main():
     print("Loading data...")
@@ -476,6 +402,10 @@ def main():
     print("=" * 60)
     lift = lift_table(priced)
     print(lift.round(2).to_string())
+
+    # band 1 came out more expensive than band 2 the first time I ran this.
+    # first guess was lots of very short policies, these two checks were how
+    # I ruled that out and found it was a handful of huge claims instead
     print("\nMean exposure by band (is band 1 full of very short policies?):")
     print(priced.assign(
         band=pd.qcut(priced["pure_premium"], 10, labels=False,
